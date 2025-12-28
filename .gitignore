@@ -28,8 +28,8 @@ ENV/
 # =========================
 # Streamlit
 # =========================
-.streamlit/
 .streamlit/secrets.toml
+
 
 # =========================
 # Logs & Temp
