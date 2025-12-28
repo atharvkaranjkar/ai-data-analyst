@@ -79,8 +79,12 @@ with st.expander("Preview data"):
 suggestions = [
     "Summarize the dataset",
     "Show summary statistics for numeric columns",
-    "Show top 10 counts for a categorical column",
-    "Create a histogram of a numeric column"
+    "Show number of rows and columns",
+    "Show missing value counts",
+    "Show top 10 rows",
+    "Show unique values per column",
+    "Create a histogram of a numeric column",
+    "Create a bar chart of counts for a categorical column",
 ]
 
 prompt = st.selectbox(
@@ -104,70 +108,100 @@ st.write(final_prompt)
 if st.button("Run analysis"):
     with st.spinner("Running analysis..."):
 
-        # 1️⃣ Try deterministic (rule-based) analysis
-        code = None
-        if "summarize" in final_prompt.lower():
-            result = {
+        prompt_lower = final_prompt.lower()
+
+        # -----------------------------
+        # RULE-BASED (NO LLM REQUIRED)
+        # -----------------------------
+
+        if "summarize" in prompt_lower:
+            st.json({
                 "Rows": len(df),
                 "Columns": len(df.columns),
-                "Numeric columns": df.select_dtypes(include="number").columns.tolist()
-            }
-            st.json(result)
+                "Column names": list(df.columns)
+            })
             st.stop()
 
-        if "summary statistics" in final_prompt.lower():
+        if "summary statistics" in prompt_lower:
             st.dataframe(df.describe())
             st.stop()
 
-        # 2️⃣ If LLM requested
-        if use_llm:
-            raw_prompt = (
-                "Return ONLY Python code inside a ```python``` block.\n"
-                "DataFrame is named df.\n\n"
-                f"User prompt: {final_prompt}"
-            )
+        if "number of rows" in prompt_lower or "rows and columns" in prompt_lower:
+            st.write(f"Rows: {df.shape[0]}")
+            st.write(f"Columns: {df.shape[1]}")
+            st.stop()
 
-            llm_out = analyst.ask_llm(raw_prompt, model=llm_model)
+        if "missing" in prompt_lower:
+            st.dataframe(df.isna().sum())
+            st.stop()
 
-            if llm_out is None:
-                st.warning(
-                    "Local LLM is not available. "
-                    "Run the app locally with Ollama installed."
-                )
-                st.stop()
+        if "top 10 rows" in prompt_lower:
+            st.dataframe(df.head(10))
+            st.stop()
 
-            if llm_out.startswith("[LLM-"):
-                st.error("LLM error:")
-                st.write(llm_out)
-                st.stop()
+        if "unique values" in prompt_lower:
+            st.dataframe(df.nunique())
+            st.stop()
 
-            if "```python" not in llm_out:
-                st.error("LLM did not return Python code.")
-                st.write(llm_out)
-                st.stop()
+        if "histogram" in prompt_lower:
+            num_cols = df.select_dtypes(include="number").columns
+            if len(num_cols) == 0:
+                st.warning("No numeric columns found.")
+            else:
+                st.bar_chart(df[num_cols[0]])
+            st.stop()
 
-            try:
-                code = llm_out.split("```python")[1].split("```")[0]
-                res = analyst.run_code(df, code)
-            except Exception as e:
-                st.error(f"Failed to execute LLM code: {e}")
-                st.stop()
+        if "bar chart" in prompt_lower or "categorical" in prompt_lower:
+            cat_cols = df.select_dtypes(include="object").columns
+            if len(cat_cols) == 0:
+                st.warning("No categorical columns found.")
+            else:
+                counts = df[cat_cols[0]].value_counts()
+                st.bar_chart(counts)
+            st.stop()
 
-        else:
-            st.error(
+        # -----------------------------
+        # LLM FALLBACK (LOCAL ONLY)
+        # -----------------------------
+
+        if not use_llm:
+            st.warning(
                 "This prompt requires an LLM. "
-                "Enable **Use local LLM** when running locally."
+                "Run the app locally and enable Ollama."
             )
             st.stop()
 
-    # --------------------------------------------------
-    # Display result
-    # --------------------------------------------------
-    if res["type"] == "text":
-        st.text(res["output"])
-    elif res["type"] == "dataframe":
-        st.dataframe(res["df"])
-    elif res["type"] == "image":
-        st.image(res["path"])
-    else:
-        st.write(res)
+        raw_prompt = (
+            "Return ONLY Python code inside a ```python``` block.\n"
+            "DataFrame is named df.\n\n"
+            f"User prompt: {final_prompt}"
+        )
+
+        llm_out = analyst.ask_llm(raw_prompt)
+
+        if llm_out is None:
+            st.warning(
+                "Local LLM is not available. "
+                "Run the app locally with Ollama installed."
+            )
+            st.stop()
+
+        if llm_out.startswith("[LLM-"):
+            st.error(llm_out)
+            st.stop()
+
+        if "```python" not in llm_out:
+            st.error("LLM did not return Python code.")
+            st.write(llm_out)
+            st.stop()
+
+        code = llm_out.split("```python")[1].split("```")[0]
+
+        res = analyst.run_code(df, code)
+
+        if res["type"] == "text":
+            st.text(res["output"])
+        elif res["type"] == "dataframe":
+            st.dataframe(res["df"])
+        elif res["type"] == "image":
+            st.image(res["path"])
