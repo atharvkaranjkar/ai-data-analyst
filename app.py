@@ -6,16 +6,23 @@ import os
 import analyst
 
 # --------------------------------------------------
-# Basic Streamlit setup
+# Page config (must be first Streamlit call)
 # --------------------------------------------------
 st.set_page_config(
     page_title="Personal AI Data Analyst",
     layout="wide"
 )
 
-st.title("🧠 Personal AI Data Analyst")
-
+# --------------------------------------------------
+# Environment detection
+# --------------------------------------------------
 IS_CLOUD = os.getenv("STREAMLIT_CLOUD") is not None
+AWS_REGION = os.getenv("AWS_REGION")
+
+# --------------------------------------------------
+# UI
+# --------------------------------------------------
+st.title("🧠 Personal AI Data Analyst")
 
 # --------------------------------------------------
 # Sidebar
