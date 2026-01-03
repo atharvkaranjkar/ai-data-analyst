@@ -8,15 +8,9 @@ import numpy as np
 import textwrap
 import sys
 import os
-import subprocess
-from typing import Optional
-
-
-# db import
-try:
-    import duckdb
-except Exception:
-    duckdb = None
+import boto3
+from botocore.exceptions import ClientError
+import json
 
 # Step 1: Robust Data Loading
 #-------------- Load Data--------------
@@ -66,22 +60,13 @@ def load_data(file_or_path) -> pd.DataFrame:
         bio.seek(0); return pd.read_json(bio)
     
 
-
-
 # Step 2: Deterministic Intelligence (Prompt Suggestions)
 
 def _detect_column_types(df: pd.DataFrame):
     numeric = df.select_dtypes(include=[np.number]).columns.tolist()
     datetime = []
         
-    # try to infer datetime columns
-
-# this is more robust code wrt to pandas 
-
-    # for c in df.columns:
-    #     if pd.api.types.is_datetime64_any_dtype(df[c]):
-    #         datetime.append(c)
-    
+    # try to infer datetime columns   
 # this is more robust code wrt NumPy
     for c in df.columns:
         if np.issubdtype(df[c].dtype, np.datetime64):
@@ -141,11 +126,7 @@ def suggest_prompts(df: pd.DataFrame, max_suggestions: int = 8):
     # limit suggestions
     return suggestions[:max_suggestions]
 
-
-
-
 # Step 3: The Translator
-
 def prompt_to_code(prompt: str, df: pd.DataFrame):
     """
     Convert known prompt templates into runnable python code strings.
@@ -353,96 +334,72 @@ def run_code(df: pd.DataFrame, code: str):
 
 
 # Step 5: The LLM Connector
-# def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 60) -> str:
-#     """
-#     Send prompt to local Ollama via CLI. Returns stdout text.
-#     If ollama is not installed or fails, returns an error string starting with [LLM...].
-#     Expect the model to return code inside ```python blocks.
-#     """
-#     try:
-#         proc = subprocess.run(["ollama", "run", model], input=prompt.encode("utf-8"),
-#                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-#         out = proc.stdout.decode("utf-8", errors="replace")
-#         err = proc.stderr.decode("utf-8", errors="replace")
-#         if not out and err:
-#             return f"[LLM-error] {err}"
-#         return out
-#     except FileNotFoundError:
-#         return "[LLM-missing] ollama not found on PATH."
-#     except Exception as e:
-#         return f"[LLM-failed] {e}"
-# def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 60) -> Optional[str]:
-#     """
-#     Send prompt to local Ollama via CLI.
-
-#     Returns:
-#     - str: model output
-#     - None: if Ollama is unavailable (e.g. Streamlit Cloud)
-#     - str starting with [LLM-...] for recoverable errors
-#     """
-
-#     # Auto-disable local LLM on Streamlit Cloud
-#     if os.getenv("STREAMLIT_CLOUD"):
-#         return None
-
-#     try:
-#         proc = subprocess.run(
-#             ["ollama", "run", model],
-#             input=prompt.encode("utf-8"),
-#             stdout=subprocess.PIPE,
-#             stderr=subprocess.PIPE,
-#             timeout=timeout,
-#             check=False,
-#         )
-
-#         out = proc.stdout.decode("utf-8", errors="replace").strip()
-#         err = proc.stderr.decode("utf-8", errors="replace").strip()
-
-#         if not out:
-#             return f"[LLM-error] {err or 'No output from model'}"
-
-#         return out
-
-#     except FileNotFoundError:
-#         return None  # Ollama not installed
-
-#     except subprocess.TimeoutExpired:
-#         return "[LLM-timeout] Model response timed out."
-
-#     except Exception as e:
-#         return f"[LLM-failed] {e}"
-
-
-import subprocess
-import os
-
-def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 120):
-
+def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 180) -> str:
     """
-    Calls local Ollama to generate Python code.
-    Returns:
-    - str: LLM output
-    - None: if Ollama is unavailable
+    Auto-selects LLM backend:
+    - AWS Bedrock if AWS credentials are present
+    - Ollama otherwise
     """
 
+    # Detect AWS environment
+    has_aws = os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY")
+
+    if has_aws:
+        return ask_llm_bedrock(prompt)
+
+    # Fallback → Ollama (local)
     try:
         proc = subprocess.run(
             ["ollama", "run", model],
             input=prompt.encode("utf-8"),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=timeout,
+            timeout=timeout
         )
 
-        output = proc.stdout.decode("utf-8", errors="replace").strip()
-        if not output:
-            return "[LLM-error] Empty response from model"
+        out = proc.stdout.decode("utf-8", errors="replace")
+        err = proc.stderr.decode("utf-8", errors="replace")
 
-        return output
+        if not out and err:
+            return f"[LLM-error] {err}"
+        return out
 
     except FileNotFoundError:
-        return None
-    except subprocess.TimeoutExpired:
-        return "[LLM-timeout] Model took too long to respond"
+        return "[LLM-missing] Ollama not found."
     except Exception as e:
         return f"[LLM-failed] {e}"
+
+    
+
+def ask_llm_bedrock(prompt: str, model_id: str = "amazon.titan-text-lite-v1") -> str:
+    """
+    Sends prompt to AWS Bedrock and returns the response text.
+    """
+    try:
+        client = boto3.client(
+            service_name="bedrock-runtime",
+            region_name=os.getenv("AWS_REGION", "us-east-1")
+        )
+
+        body = {
+            "inputText": prompt,
+            "textGenerationConfig": {
+                "maxTokenCount": 512,
+                "temperature": 0.3,
+                "topP": 0.9
+            }
+        }
+
+        response = client.invoke_model(
+            modelId=model_id,
+            body=json.dumps(body),
+            accept="application/json",
+            contentType="application/json"
+        )
+
+        response_body = json.loads(response["body"].read())
+        return response_body["results"][0]["outputText"]
+
+    except ClientError as e:
+        return f"[AWS-Bedrock-error] {e}"
+
