@@ -16,7 +16,7 @@ def ask_aws_llm(
 
     client = boto3.client(
         "bedrock-runtime",
-        region_name=os.getenv("AWS_REGION")
+        region_name=os.getenv("AWS_REGION", "us-east-1")
     )
 
     body = {

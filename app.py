@@ -19,6 +19,12 @@ st.set_page_config(
 # --------------------------------------------------
 IS_CLOUD = os.getenv("STREAMLIT_CLOUD") is not None
 
+
+
+# TEMP DEBUG — REMOVE AFTER CONFIRMATION
+st.write("AWS_REGION:", os.getenv("AWS_REGION"))
+st.write("Has Access Key:", bool(os.getenv("AWS_ACCESS_KEY_ID")))
+st.write("Has Secret:", bool(os.getenv("AWS_SECRET_ACCESS_KEY")))
 # --------------------------------------------------
 # Helper functions
 # --------------------------------------------------
