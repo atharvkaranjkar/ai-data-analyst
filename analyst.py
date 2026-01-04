@@ -8,10 +8,10 @@ import numpy as np
 import textwrap
 import sys
 import os
-import boto3
 from botocore.exceptions import ClientError
 import json
-
+import aws_llm
+import subprocess
 # Step 1: Robust Data Loading
 #-------------- Load Data--------------
 
@@ -336,18 +336,30 @@ def run_code(df: pd.DataFrame, code: str):
 # Step 5: The LLM Connector
 def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 180) -> str:
     """
-    Auto-selects LLM backend:
-    - AWS Bedrock if AWS credentials are present
-    - Ollama otherwise
+    Unified LLM interface.
+    - Uses AWS Bedrock (Claude) if credentials exist
+    - Falls back to local Ollama
     """
 
     # Detect AWS environment
-    has_aws = os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY")
+    has_aws = (
+        os.getenv("AWS_ACCESS_KEY_ID")
+        and os.getenv("AWS_SECRET_ACCESS_KEY")
+        and os.getenv("AWS_REGION")
+    )
 
+    # -------------------------
+    # AWS Bedrock (Claude)
+    # -------------------------
     if has_aws:
-        return ask_llm_bedrock(prompt)
+        try:
+            return aws_llm.ask_aws_llm(prompt)
+        except Exception as e:
+            return f"[LLM-AWS-error] {e}"
 
-    # Fallback → Ollama (local)
+    # -------------------------
+    # Local Ollama fallback
+    # -------------------------
     try:
         proc = subprocess.run(
             ["ollama", "run", model],
@@ -356,50 +368,10 @@ def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 180) -> str:
             stderr=subprocess.PIPE,
             timeout=timeout
         )
-
-        out = proc.stdout.decode("utf-8", errors="replace")
-        err = proc.stderr.decode("utf-8", errors="replace")
-
-        if not out and err:
-            return f"[LLM-error] {err}"
-        return out
+        return proc.stdout.decode("utf-8", errors="replace")
 
     except FileNotFoundError:
         return "[LLM-missing] Ollama not found."
+
     except Exception as e:
-        return f"[LLM-failed] {e}"
-
-    
-
-def ask_llm_bedrock(prompt: str, model_id: str = "amazon.titan-text-lite-v1") -> str:
-    """
-    Sends prompt to AWS Bedrock and returns the response text.
-    """
-    try:
-        client = boto3.client(
-            service_name="bedrock-runtime",
-            region_name=os.getenv("AWS_REGION", "us-east-1")
-        )
-
-        body = {
-            "inputText": prompt,
-            "textGenerationConfig": {
-                "maxTokenCount": 512,
-                "temperature": 0.3,
-                "topP": 0.9
-            }
-        }
-
-        response = client.invoke_model(
-            modelId=model_id,
-            body=json.dumps(body),
-            accept="application/json",
-            contentType="application/json"
-        )
-
-        response_body = json.loads(response["body"].read())
-        return response_body["results"][0]["outputText"]
-
-    except ClientError as e:
-        return f"[AWS-Bedrock-error] {e}"
-
+        return f"[LLM-local-error] {e}"

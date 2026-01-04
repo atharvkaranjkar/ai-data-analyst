@@ -46,7 +46,9 @@ def detect_intent(prompt: str) -> str:
     analysis_keywords = [
         "recommend", "suggest", "improve",
         "action", "insight", "explain",
-        "why", "analyze"
+        "why", "analyze", "identify",
+        "gap", "difference", "bias",
+        "inequality", "disparity"
     ]
 
     if any(k in p for k in visual_keywords):
@@ -63,7 +65,7 @@ def detect_intent(prompt: str) -> str:
 st.title("🧠 Personal AI Data Analyst")
 
 # --------------------------------------------------
-# Sidebar
+# S  bar
 # --------------------------------------------------
 st.sidebar.header("Settings")
 
