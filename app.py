@@ -19,12 +19,13 @@ st.set_page_config(
 # --------------------------------------------------
 IS_CLOUD = os.getenv("STREAMLIT_CLOUD") is not None
 
-
-
-# TEMP DEBUG — REMOVE AFTER CONFIRMATION
-st.write("AWS_REGION:", os.getenv("AWS_REGION"))
-st.write("Has Access Key:", bool(os.getenv("AWS_ACCESS_KEY_ID")))
-st.write("Has Secret:", bool(os.getenv("AWS_SECRET_ACCESS_KEY")))
+# Load AWS credentials from Streamlit secrets if available
+if "AWS_ACCESS_KEY_ID" in st.secrets:
+    os.environ["AWS_ACCESS_KEY_ID"] = st.secrets["AWS_ACCESS_KEY_ID"]
+if "AWS_SECRET_ACCESS_KEY" in st.secrets:
+    os.environ["AWS_SECRET_ACCESS_KEY"] = st.secrets["AWS_SECRET_ACCESS_KEY"]
+if "AWS_REGION" in st.secrets:
+    os.environ["AWS_REGION"] = st.secrets["AWS_REGION"]
 # --------------------------------------------------
 # Helper functions
 # --------------------------------------------------
