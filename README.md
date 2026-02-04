@@ -17,7 +17,7 @@ This project demonstrates how to combine **rule-based analytics**, **semantic in
   - Anomaly detection
   - Business recommendations
 - **Auto-generated visualizations** based on user intent
-- **AWS Bedrock LLM integration** (Claude / Titan)
+- **AWS Bedrock LLM integration** (Amazon Nova Lite)
 - Optional **local LLM support** (Ollama) for development
 - Cloud-ready deployment on **Streamlit Cloud**
 
@@ -59,8 +59,8 @@ User prompts are classified into:
 
 ### Cloud (Production)
 - **AWS Bedrock**
-  - Recommended model: **Claude 3 Sonnet**
-  - Region: `us-east-1` or `ap-south-1`
+  - Current model: **Amazon Nova Lite** (`amazon.nova-lite-v1:0`)
+  - Region: `us-east-1` (configurable via `AWS_REGION`)
 
 ### Local (Development)
 - **Ollama**
@@ -81,48 +81,67 @@ User prompts are classified into:
 
 ## 📦 Requirements
 
-```txt
-streamlit==1.29.0
-pandas>=1.5,<2.1
-numpy>=1.24,<1.27
-boto3>=1.34.0
-```
+See `requirements.txt` for complete dependencies. Key packages:
+- `streamlit` - UI framework
+- `pandas` / `numpy` - Data processing
+- `boto3` - AWS SDK for Bedrock access
 
 ---
 
-## 🔐 Environment Variables (Cloud)
+## 🔐 Secrets Configuration
 
-Set these in **Streamlit Cloud → App Settings → Secrets**:
+### Local Development
+Create `.streamlit/secrets.toml` in your project root:
 
 ```toml
-AWS_ACCESS_KEY_ID = "YOUR_ACCESS_KEY"
-AWS_SECRET_ACCESS_KEY = "YOUR_SECRET_KEY"
+AWS_ACCESS_KEY_ID = "your_access_key_here"
+AWS_SECRET_ACCESS_KEY = "your_secret_key_here"
 AWS_REGION = "us-east-1"
 ```
 
-⚠️ Never commit credentials to GitHub.
+A template file (`.streamlit/secrets.example.toml`) is provided for reference.
+
+### Cloud Deployment (Streamlit Cloud)
+Set these in **Streamlit Cloud → App Settings → Secrets** using the same format as above.
+
+⚠️ **Never commit `secrets.toml` to GitHub** — it's already in `.gitignore`
 
 ---
 
 ## ▶️ Run Locally
 
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+1. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-(Optional) Install Ollama for local LLM testing.
+2. **Setup credentials:**
+   - Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml`
+   - Add your AWS credentials
+
+3. **Run the app:**
+   ```bash
+   streamlit run app.py
+   ```
+
+4. **Access:** Open `http://localhost:8501` in your browser
+
+(Optional) Install Ollama for local LLM fallback testing.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-├── app.py          # Streamlit UI & routing logic
-├── analyst.py      # LLM abstraction layer
-├── aws_llm.py      # AWS Bedrock integration
-├── requirements.txt
-└── README.md
+├── app.py                        # Streamlit UI & routing logic
+├── analyst.py                    # LLM abstraction layer & analytics
+├── aws_llm.py                    # AWS Bedrock integration
+├── .streamlit/
+│   ├── secrets.example.toml      # Template for local secrets
+│   └── secrets.toml              # Local credentials (not in git)
+├── requirements.txt              # Python dependencies
+├── .gitignore                    # Git ignore rules
+└── README.md                     # This file
 ```
 
 ---

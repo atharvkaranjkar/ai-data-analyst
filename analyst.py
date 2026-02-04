@@ -2,6 +2,7 @@ import io
 import tempfile
 import subprocess
 from pathlib import Path
+from typing import Union, Optional
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +13,7 @@ from botocore.exceptions import ClientError
 import json
 import aws_llm
 import subprocess
+import re
 # Step 1: Robust Data Loading
 #-------------- Load Data--------------
 
@@ -333,29 +335,131 @@ def run_code(df: pd.DataFrame, code: str):
         sys.stdout = old_stdout
 
 
-# Step 5: The LLM Connector
+# Step 5: Helper Functions for Robust LLM Handling
+
+def is_error_response(response: str) -> bool:
+    """Check if LLM response indicates an error."""
+    if not response:
+        return True
+    error_patterns = [
+        "[LLM-AWS-error]",
+        "[LLM-missing]",
+        "[LLM-local-error]",
+        "ClientError",
+        "Connection refused"
+    ]
+    return any(pattern in response for pattern in error_patterns)
+
+def extract_json_from_response(response: str) -> Optional[dict]:
+    """
+    Extract JSON from LLM response.
+    Handles:
+    - Plain JSON objects
+    - JSON wrapped in markdown code blocks
+    - JSON with surrounding text
+    """
+    if not response:
+        return None
+    
+    # Try markdown code blocks first
+    patterns = [
+        r"```json\s*(\{.*?\})\s*```",
+        r"```\s*(\{.*?\})\s*```",
+        r"(\{.*?\})"
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, response, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+    
+    return None
+
+def validate_visualization_plan(plan: dict, df: pd.DataFrame) -> tuple[bool, str]:
+    """
+    Validate visualization plan returned by LLM.
+    Returns (is_valid, error_message)
+    """
+    required_fields = ["chart", "x", "y", "aggregation"]
+    
+    # Check required fields
+    for field in required_fields:
+        if field not in plan:
+            return False, f"Missing required field: '{field}'"
+    
+    chart_type = plan.get("chart", "").lower()
+    if chart_type not in ["bar", "line", "scatter", "histogram", "box"]:
+        return False, f"Unsupported chart type: '{chart_type}'"
+    
+    x = plan.get("x")
+    y = plan.get("y")
+    group_by = plan.get("group_by")
+    agg = plan.get("aggregation", "").lower()
+    
+    # Validate columns exist
+    if x not in df.columns:
+        return False, f"Column '{x}' not found in dataset"
+    if y not in df.columns:
+        return False, f"Column '{y}' not found in dataset"
+    if group_by and group_by not in df.columns:
+        return False, f"Group column '{group_by}' not found in dataset"
+    
+    # Validate aggregation
+    valid_aggs = ["count", "sum", "mean", "median", "min", "max", "std"]
+    if agg not in valid_aggs:
+        return False, f"Unsupported aggregation: '{agg}'. Use one of {valid_aggs}"
+    
+    return True, ""
+
+def check_aws_credentials() -> tuple[bool, str]:
+    """
+    Check if AWS credentials are properly configured.
+    Returns (has_credentials, status_message)
+    """
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    region = os.getenv("AWS_REGION")
+    
+    if access_key and secret_key and region:
+        return True, f"✅ AWS configured (region: {region})"
+    
+    missing = []
+    if not access_key:
+        missing.append("AWS_ACCESS_KEY_ID")
+    if not secret_key:
+        missing.append("AWS_SECRET_ACCESS_KEY")
+    if not region:
+        missing.append("AWS_REGION")
+    
+    return False, f"⚠️ AWS not configured. Missing: {', '.join(missing)}"
+
+# Step 6: The LLM Connector (Enhanced)
 def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 180) -> str:
     """
     Unified LLM interface.
     - Uses AWS Bedrock (Claude) if credentials exist
     - Falls back to local Ollama
+    - Returns error message if both fail
     """
 
-    # Detect AWS environment
-    has_aws = (
-        os.getenv("AWS_ACCESS_KEY_ID")
-        and os.getenv("AWS_SECRET_ACCESS_KEY")
-        and os.getenv("AWS_REGION")
-    )
+    # Check AWS environment
+    has_aws, aws_status = check_aws_credentials()
 
     # -------------------------
     # AWS Bedrock (Claude)
     # -------------------------
     if has_aws:
         try:
-            return aws_llm.ask_aws_llm(prompt)
+            result = aws_llm.ask_aws_llm(prompt)
+            return result["text"]
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            return f"[LLM-AWS-error] {error_code}: {str(e)}"
         except Exception as e:
-            return f"[LLM-AWS-error] {e}"
+            return f"[LLM-AWS-error] {type(e).__name__}: {str(e)}"
 
     # -------------------------
     # Local Ollama fallback
@@ -368,10 +472,16 @@ def ask_llm(prompt: str, model: str = "llama3.1", timeout: int = 180) -> str:
             stderr=subprocess.PIPE,
             timeout=timeout
         )
-        return proc.stdout.decode("utf-8", errors="replace")
+        output = proc.stdout.decode("utf-8", errors="replace").strip()
+        if not output:
+            return f"[LLM-local-error] Ollama returned empty response"
+        return output
 
     except FileNotFoundError:
-        return "[LLM-missing] Ollama not found."
+        return "[LLM-missing] Ollama is not installed or not in PATH. Install from https://ollama.ai"
+
+    except subprocess.TimeoutExpired:
+        return f"[LLM-local-error] Ollama request timed out after {timeout}s"
 
     except Exception as e:
-        return f"[LLM-local-error] {e}"
+        return f"[LLM-local-error] {type(e).__name__}: {str(e)}"
